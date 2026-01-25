@@ -1,4 +1,10 @@
 #include "systemcalls.h"
+#include <fcntl.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <sys/wait.h>
+#include <syslog.h>
+#include <errno.h>
 
 /**
  * @param cmd the command to execute with system()
@@ -10,13 +16,10 @@
 bool do_system(const char *cmd)
 {
 
-/*
- * TODO  add your code here
- *  Call the system() function with the command set in the cmd
- *   and return a boolean true if the system() call completed with success
- *   or false() if it returned a failure
-*/
-
+    int ret = system(cmd);
+    if (ret == -1){
+        return false;
+    }
     return true;
 }
 
@@ -36,6 +39,7 @@ bool do_system(const char *cmd)
 
 bool do_exec(int count, ...)
 {
+    openlog(NULL,0,LOG_USER);
     va_list args;
     va_start(args, count);
     char * command[count+1];
@@ -47,20 +51,40 @@ bool do_exec(int count, ...)
     command[count] = NULL;
     // this line is to avoid a compile warning before your implementation is complete
     // and may be removed
-    command[count] = command[count];
+    //command[count] = command[count];
 
-/*
- * TODO:
- *   Execute a system command by calling fork, execv(),
- *   and wait instead of system (see LSP page 161).
- *   Use the command[0] as the full path to the command to execute
- *   (first argument to execv), and use the remaining arguments
- *   as second argument to the execv() command.
- *
-*/
 
+    // syslog(LOG_DEBUG, "first char of command 0:%d\n", command[0][0]);
+    syslog(LOG_DEBUG, "command 0:%s:\n", command[0]);
+    // if (command[0][0] != 47) {syslog(LOG_ERR, " %d:\n", errno); return false;}
+    int w;
+    pid_t pid = fork();
+    if (pid == -1) {
+        perror("fork"); 
+        syslog(LOG_ERR, "fork had trouble! %d\n", errno);
+        va_end(args);
+        return false;
+    }
+    else if(pid == 0) {
+        int ret = execv(command[0], command); 
+        syslog(LOG_DEBUG, "execv error code %d\n", ret);
+        if (ret == -1){
+        exit(EXIT_FAILURE);
+        }
+    }
+    else {
+        wait(&w);
+        //syslog(LOG_DEBUG, "wait return code:%d\n", w);
+        if (WIFEXITED(w)) {
+            syslog(LOG_DEBUG, "wexitstatus: %d",WEXITSTATUS(w));
+            if (WEXITSTATUS(w) == 1){
+                syslog(LOG_ERR, "returning false");
+                va_end(args);
+                return false;
+            }
+        } 
+    }
     va_end(args);
-
     return true;
 }
 
@@ -71,6 +95,7 @@ bool do_exec(int count, ...)
 */
 bool do_exec_redirect(const char *outputfile, int count, ...)
 {
+    openlog(NULL,0,LOG_USER);
     va_list args;
     va_start(args, count);
     char * command[count+1];
@@ -84,16 +109,29 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
     // and may be removed
     command[count] = command[count];
 
-
-/*
- * TODO
- *   Call execv, but first using https://stackoverflow.com/a/13784315/1446624 as a refernce,
- *   redirect standard out to a file specified by outputfile.
- *   The rest of the behaviour is same as do_exec()
- *
-*/
-
+    int fd = open(outputfile, O_WRONLY|O_TRUNC|O_CREAT, 0644);
+    if (fd < 0) { perror("open"); va_end(args); return false; }
+    int w;
+    pid_t pid = fork();
+    switch (pid){
+        case -1: perror("fork"); va_end(args); return false;
+        case 0: 
+            if (dup2(fd, 1) < 0) { perror("dup2"); exit(EXIT_FAILURE); }
+            close(fd);
+            int ret = execv(command[0], command); 
+            if (ret == -1){
+                perror("execv"); 
+                exit(EXIT_FAILURE);
+            } 
+        default: 
+            wait(&w);
+            if (w != 0) {
+                perror("wait");
+                va_end(args);
+                return false;
+            }
+            close(fd);
+    }
     va_end(args);
-
     return true;
 }
