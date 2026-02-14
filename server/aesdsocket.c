@@ -135,7 +135,6 @@ int perform_socket_actions(int log_file, int listen_backlog) {
         }
         close(client_fd);  
     }
-
     return 0;
 
 }
