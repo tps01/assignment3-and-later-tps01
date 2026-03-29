@@ -95,10 +95,152 @@ void signal_handler(int signal_number){
     }
 }
 
+
+int setup_timer(int clock_id, timer_t timerid, 
+                 unsigned int timer_period_ms, struct timespec *start_time){
+    // This function and the time_functions_shared file are from the lecture 9 examples.
+    {
+        int success = 1;
+        if ( clock_gettime(clock_id,start_time) != 0 ) {
+            printf("Error %d (%s) getting clock %d time\n",errno,strerror(errno),clock_id);
+        } else {
+            struct itimerspec itimerspec;
+            memset(&itimerspec, 0, sizeof(struct itimerspec));
+            itimerspec.it_value.tv_sec = 10;
+            itimerspec.it_value.tv_nsec = timer_period_ms * 0;
+            itimerspec.it_interval.tv_sec = itimerspec.it_value.tv_sec;
+            itimerspec.it_interval.tv_nsec = itimerspec.it_value.tv_nsec;
+            if( timer_settime(timerid, 0, &itimerspec, NULL ) != 0 ) {
+                printf("Error %d (%s) setting timer\n",errno,strerror(errno));
+            } else {
+                success = 0;
+            }
+        }
+        return success;
+    }
+}
+
+
+void timer_thread(union sigval sigval){
+    syslog(LOG_DEBUG, "Timer thread: %ld\n", pthread_self());
+    struct entry *td = (struct entry*) sigval.sival_ptr;
+    int rc = pthread_mutex_lock(td->file_lock);
+    if (rc != 0 ){
+        perror("pthread_mutex_lock");
+        syslog(LOG_DEBUG,"rc %d \n",rc);
+        syslog(LOG_DEBUG,"Error %d (%s) locking mutex\n",errno,strerror(errno));
+    } else {
+        syslog(LOG_DEBUG, "Thread %ld has lock\n", pthread_self());
+        char outstr[37];
+        time_t t;
+        struct tm *tmp;
+        t = time(NULL);
+        tmp = localtime(&t);
+        if (tmp == NULL){
+            perror("localtime");
+        }
+        syslog(LOG_DEBUG, "Getting current time."); 
+        if (strftime(outstr,sizeof(outstr),"%a, %d %b %Y %T %z",tmp) == 0) {
+            perror("strftime"); 
+        } else {
+            char timestamp[80];
+            strcpy(timestamp, "timestamp:");
+            strcat(timestamp, outstr);
+            strncat(timestamp, "\n", 79);
+            int rc = write(log_file, timestamp, sizeof(timestamp));
+            if (rc == -1){
+                perror("write");
+            }
+            syslog(LOG_DEBUG, "Wrote time %s to log_file: %d\n",outstr, log_file);
+        }
+
+        rc = pthread_mutex_unlock(td->file_lock);
+        if (rc != 0 ){
+            syslog(LOG_DEBUG,"rc %d \n",rc);
+            perror("pthread_mutex_unlock");
+            syslog(LOG_DEBUG,"Error %d (%s) unlocking mutex\n",errno,strerror(errno));
+        }
+        syslog(LOG_DEBUG, "Thread %ld dropped lock\n", pthread_self());
+    }
+    
+}
+
+
+void* thread_job(void* t_args) {
+    syslog(LOG_DEBUG, "In thread now!\n");
+    struct entry* args = (struct entry *)t_args;
+    int client_fd = args->client_fd;
+    syslog(LOG_DEBUG, "Thread sees client fd %d\n", client_fd);
+    //lock mutex
+    int rc = pthread_mutex_lock(args->file_lock);
+    if (rc != 0 ){
+        perror("pthread_mutex_lock");
+        pthread_exit(NULL);
+    }
+    syslog(LOG_DEBUG, "Thread %ld has lock\n", pthread_self());
+    // recv, send
+    rc = sock_recv(args->log_file, client_fd);
+    if (rc == -1){
+        syslog(LOG_ERR, "Could not receive from %d\n", client_fd);
+    }
+    syslog(LOG_DEBUG, "Thread wrote to fd %d\n", log_file);
+    rc = sock_send(args->log_file, client_fd);
+    if (rc == -1){
+        syslog(LOG_ERR, "Could not send to %d\n", client_fd);
+    }
+    syslog(LOG_DEBUG, "Thread read from fd %d\n", log_file);
+    close(client_fd);
+    //unlock mutex
+    rc = pthread_mutex_unlock(args->file_lock);
+    if (rc != 0 ){
+        perror("pthread_mutex_unlock");
+        pthread_exit(NULL);
+    }
+    syslog(LOG_DEBUG, "Thread %ld dropped lock\n", pthread_self());
+    //raise flag
+    args->complete = 0;
+    pthread_exit(NULL);
+}
+
+
 int perform_socket_actions(int log_file, int listen_backlog) {
     struct sockaddr_in client_addr;
     socklen_t client_len;
     client_len = sizeof(client_addr);
+    //pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;    
+    pthread_mutex_t mutex;
+    if ( pthread_mutex_init(&mutex,NULL) != 0 ) {
+        printf("Error %d (%s) initializing thread mutex!\n",errno,strerror(errno));
+    }
+    SLIST_HEAD(slisthead, entry);
+    struct slisthead head;
+    SLIST_INIT(&head);
+
+    //create timer thread with posix timer + event handler
+    timer_t timerid;
+    struct sigevent sev;
+    int clock_id = CLOCK_MONOTONIC;
+    memset(&sev,0,sizeof(struct sigevent));
+    struct entry* t_node = (struct entry *)malloc(sizeof(struct entry));
+    t_node->client_fd = 0; // don't care for timer
+    t_node->log_file = log_file;
+    t_node->file_lock = &mutex; // all nodes point to the same mutex address
+    t_node->complete = 1; // all nodes start at 1
+    sev.sigev_notify = SIGEV_THREAD;
+    sev.sigev_value.sival_ptr = t_node;
+    //SLIST_INSERT_HEAD(&head, t_node, entries);
+    sev.sigev_notify_function = timer_thread;
+    if (timer_create(clock_id,&sev,&timerid) != 0) {
+        perror("timer_create");
+        syslog(LOG_ERR, "Error creating timer: %d %s\n", errno, strerror(errno));
+    } else {
+        syslog(LOG_DEBUG, "timer ID is %#jx\n", (uint64_t) timerid);
+        struct timespec start_time;
+        int rc = setup_timer(clock_id, timerid, 10000, &start_time);
+        if (rc != 0) {
+            syslog(LOG_ERR, "Error starting timer %#jx\n", (uint64_t) timerid);
+        }
+    }
 
     while (non_interrupted == true){
         if (listen(fd,listen_backlog) == -1){
@@ -108,7 +250,6 @@ int perform_socket_actions(int log_file, int listen_backlog) {
             return -1;
         } else {
             syslog(LOG_DEBUG, "Listening on socket %d\n", fd);
-
         }
 
         int client_fd = accept(fd, (struct sockaddr *)&client_addr, &client_len);
@@ -124,20 +265,54 @@ int perform_socket_actions(int log_file, int listen_backlog) {
             syslog(LOG_DEBUG, "Accepted connection from %d\n", client_fd);
         }
         
-        int rc = sock_recv(log_file, client_fd);
-        if (rc == -1){
-            syslog(LOG_ERR, "Could not receive from %d\n", client_fd);
-        }
-        
-        rc = sock_send(log_file, client_fd);
-        if (rc == -1){
-            syslog(LOG_ERR, "Could not send to %d\n", client_fd);
-        }
-        close(client_fd);  
-    }
-    return 0;
+        struct entry* node = (struct entry *)malloc(sizeof(struct entry));
+        node->client_fd = client_fd;
+        node->log_file = log_file;
+        node->file_lock = &mutex; // all nodes point to the same mutex address
+        node->complete = 1; // all nodes start at 1
 
+        //make a new node on linked list
+        if (SLIST_EMPTY(&head)) {
+            SLIST_INSERT_HEAD(&head, node, entries);
+            syslog(LOG_DEBUG, "Creating linked list head.\n");
+        } else {
+            struct entry* cur_node = SLIST_FIRST(&head);
+            while (SLIST_NEXT(cur_node, entries) != NULL) {
+                cur_node = SLIST_NEXT(cur_node, entries);
+            }
+            syslog(LOG_DEBUG, "Adding element to list.\n");
+            SLIST_INSERT_AFTER(cur_node, node, entries);
+        }
+
+        //create thread on the new node
+        int rc = pthread_create(&node->thread_id,NULL,thread_job,node);
+        if (rc  != 0){
+            perror("pthread_create");
+            free(node);
+            return -1;
+        }
+
+        syslog(LOG_DEBUG, "Creating thread with ID %lu\n", node->thread_id);
+        struct entry* np;
+        struct entry* temp_var;
+        SLIST_FOREACH_SAFE(np, &head, entries, temp_var) {
+            if (np->complete == 0) {
+                syslog(LOG_DEBUG, "Joining thread with ID %lu\n", np->thread_id);
+                pthread_join(np->thread_id,NULL);
+                SLIST_REMOVE(&head, np, entry, entries);
+                free(np);
+            }
+        }
+    }
+    
+    if (timer_delete(timerid) != 0) {
+        perror("timer delete");
+        syslog(LOG_ERR, "Error deleting timer: %d %#jx\n", errno, (uint64_t) timerid);
+    }
+    free(t_node);
+    return 0; 
 }
+
 
 int main(int argc, char *argv[]){
     openlog(NULL,0,LOG_USER);

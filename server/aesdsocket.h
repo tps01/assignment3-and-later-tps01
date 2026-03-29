@@ -10,6 +10,19 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <stdbool.h>
+#include <pthread.h>
+#include "queue.h"
+#include "time_functions_shared.h"
+#define _GNU_SOURCE
 
 struct addrinfo hints;
 struct addrinfo *servinfo;
+
+struct entry {
+    pthread_t thread_id; /* ID returned by pthread_create() */
+    pthread_mutex_t *file_lock; // aassign the same mutex to each entry as they're created
+    int client_fd; // assign per thread
+    int log_file; // always the same
+    int complete; // modify in thread
+    SLIST_ENTRY(entry) entries;
+};
