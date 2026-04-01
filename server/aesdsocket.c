@@ -143,10 +143,10 @@ void timer_thread(union sigval sigval){
         if (strftime(outstr,sizeof(outstr),"%a, %d %b %Y %T %z",tmp) == 0) {
             perror("strftime"); 
         } else {
-            char timestamp[80];
+            char timestamp[42];
             strcpy(timestamp, "timestamp:");
             strcat(timestamp, outstr);
-            strncat(timestamp, "\n", 79);
+            strncat(timestamp, "\n", 2);
             int rc = write(log_file, timestamp, sizeof(timestamp));
             if (rc == -1){
                 perror("write");
