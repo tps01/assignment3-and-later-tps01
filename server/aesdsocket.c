@@ -144,13 +144,10 @@ void timer_thread(union sigval sigval){
             perror("strftime"); 
         } else {
             char timestamp[43] = "timestamp:";
-            syslog(LOG_DEBUG,"timestamp 1 %s \n",timestamp);
             strncat(timestamp, outstr, sizeof(timestamp) - strlen(timestamp) - 1);
-            syslog(LOG_DEBUG,"timestamp 2 %s \n",timestamp);
             char enter = '\n';
             strncat(timestamp, &enter, sizeof(timestamp) - strlen(timestamp) - 1);
-            syslog(LOG_DEBUG,"timestamp to write: %s \n",timestamp);
-            int rc = write(log_file, timestamp, sizeof(timestamp));
+            int rc = write(log_file, timestamp, sizeof(timestamp)-1);
             if (rc == -1){
                 perror("write");
             }
