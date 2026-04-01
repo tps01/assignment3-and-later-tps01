@@ -175,7 +175,7 @@ void* thread_job(void* t_args) {
     int rc = pthread_mutex_lock(args->file_lock);
     if (rc != 0 ){
         perror("pthread_mutex_lock");
-        pthread_exit(NULL);
+        return (void *)NULL;
     }
     syslog(LOG_DEBUG, "Thread %ld has lock\n", pthread_self());
     // recv, send
@@ -194,12 +194,12 @@ void* thread_job(void* t_args) {
     rc = pthread_mutex_unlock(args->file_lock);
     if (rc != 0 ){
         perror("pthread_mutex_unlock");
-        pthread_exit(NULL);
+        return (void *)NULL;
     }
     syslog(LOG_DEBUG, "Thread %ld dropped lock\n", pthread_self());
     //raise flag
     args->complete = 0;
-    pthread_exit(NULL);
+    return (void *)NULL;
 }
 
 
