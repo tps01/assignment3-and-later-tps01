@@ -67,20 +67,21 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
         return 0;
     }
 
+
+    size_t read_size = temp_entry->size - offset_return;
+    if (temp_entry->size > count) {
+        read_size = count;
+    }
     //entry has char *buffptr and size_t size
     //put it in the user buffer
     PDEBUG("Size of entry %ld\n", temp_entry->size);
-    if (temp_entry->size > 0) {
-        PDEBUG("Copying %s to user space\n", temp_entry->buffptr);
-        copy_to_user(buf, temp_entry->buffptr, temp_entry->size);
-        f_pos = f_pos + temp_entry->size; // move pointer to next entry
-    }
 
-    retval = temp_entry->size;
+    PDEBUG("Copying %s to user space\n", temp_entry->buffptr);
+    copy_to_user(buf, temp_entry->buffptr + offset_return, read_size);
 
-    //I am totally ignoring the case where the reader requests with a count smaller than
-    //the size of the string in the entry.
 
+    retval = read_size;
+    *f_pos = *f_pos + read_size; // move pointer to next entry
     mutex_unlock(&dev->lock);
     PDEBUG("Unlocked mutex for read\n");
 
@@ -118,7 +119,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
     PDEBUG("Getting user buffer contents\n");
     copy_from_user((void *)dev->we.buffptr + dev->we.size, (const void __user *)buf, count);
     dev->we.size = count+dev->we.size;
-    //PDEBUG("User buffer contents: %s\n", buf);
+    retval = dev->we.size;
     PDEBUG("our buf: %s\n", dev->we.buffptr);
     PDEBUG("buf from user space: %s\n", buf);
 
@@ -127,10 +128,11 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
         PDEBUG("Newline detected, adding to circular buffer\n");
         aesd_circular_buffer_add_entry(buffer, &dev->we);
         PDEBUG("Added to buffer\n");
-        //temp_entry->buffptr = NULL; // reset the working entry
+        *f_pos = *f_pos + dev->we.size;
+        dev->we.buffptr = NULL; // reset the working entry
         dev->we.size = 0;
-        //kfree(temp_entry->buffptr);
-        retval = dev->we.size;
+        //kfree(dev->we.buffptr);
+        
     } 
 
     //filp->private_data 
