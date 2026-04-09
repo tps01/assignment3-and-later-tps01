@@ -117,11 +117,12 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
     }
 
     PDEBUG("Getting user buffer contents\n");
-    copy_from_user((void *)dev->we.buffptr + dev->we.size, (const void __user *)buf, count);
+    copy_from_user(dev->we.buffptr + dev->we.size, buf, count);
     dev->we.size = count+dev->we.size;
-    retval = dev->we.size;
+    retval = count; // originally had = dev->we.size, but due to the above line that would be 
+    //greater than the count passed by echo and it would error out. (This function still worked though)
     PDEBUG("our buf: %s\n", dev->we.buffptr);
-    PDEBUG("buf from user space: %s\n", buf);
+    //PDEBUG("buf from user space: %s\n", buf);
 
     //check for newline at the end of the working entry
     if (dev->we.buffptr[dev->we.size - 1] == '\n') { 
@@ -132,7 +133,6 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
         dev->we.buffptr = NULL; // reset the working entry
         dev->we.size = 0;
         //kfree(dev->we.buffptr);
-        
     } 
 
     //filp->private_data 
