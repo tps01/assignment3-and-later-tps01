@@ -15,6 +15,11 @@
 #include "time_functions_shared.h"
 #define _GNU_SOURCE
 
+#ifndef USE_AESD_CHAR_DEVICE
+#define USE_AESD_CHAR_DEVICE 1
+#endif
+
+
 struct addrinfo hints;
 struct addrinfo *servinfo;
 

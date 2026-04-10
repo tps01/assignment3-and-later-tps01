@@ -4,7 +4,21 @@ bool non_interrupted = true;
 int fd;
 int log_file;
 
+#if USE_AESD_CHAR_DEVICE
+#define LOG_FILE "/dev/aesdchar"
+#else
+#define LOG_FILE "/var/tmp/aesdsocketdata"
+#endif
+
+
 int sock_recv(int log_file, int client_fd){
+    log_file = open(LOG_FILE, O_CREAT | O_RDWR | O_NONBLOCK, 0777);
+    if (log_file == -1) {
+        perror("open");
+        syslog(LOG_ERR, "Could not access %s\n", LOG_FILE);
+        return -1;
+    }
+
     char buf[1024];
     memset(buf,0,1024);
     int num_bytes = 1024;
@@ -15,6 +29,11 @@ int sock_recv(int log_file, int client_fd){
         }
         else if (num_bytes == -1){
             perror("recv");
+            if (close(log_file) == -1){
+                perror("close");
+                syslog(LOG_ERR, "Could not close log file\n");
+                return -1;
+            }
             return -1;
         }
         if (num_bytes == 0){
@@ -25,22 +44,41 @@ int sock_recv(int log_file, int client_fd){
         int delim = 0;
         if (pos != NULL){ // \n in string, so do stuff
             delim = strcspn(buf,"\n");
+            char enter = '\n';
+            strncat(buf, &enter, sizeof(buf) - strlen(buf) - 1);
         } else {
             delim = num_bytes -1; // 1023
         }
+        
         int rc = write(log_file, buf, delim+1);
         if (rc == -1){
             perror("write");
+            if (close(log_file) == -1){
+                perror("close");
+                syslog(LOG_ERR, "Could not close log file\n");
+                return -1;
+            }
             return -1;
         }
         syslog(LOG_DEBUG, "rc: %d, log_file: %d\n",rc, log_file);    
         syslog(LOG_DEBUG, "Wrote %d bytes to file.\n", delim+1);
     }
-
+    if (close(log_file) == -1){
+        perror("close");
+        syslog(LOG_ERR, "Could not close log file\n");
+        return -1;
+    }
     return 0;
 }
 
 int sock_send(int log_file, int client_fd){
+    log_file = open(LOG_FILE, O_CREAT | O_RDWR | O_NONBLOCK, 0777);
+    if (log_file == -1) {
+        perror("open");
+        syslog(LOG_ERR, "Could not access %s\n", LOG_FILE);
+        return -1;
+    }
+
     char buf[1024];
     memset(buf,0,1024);
     int read_count = 1024;
@@ -50,6 +88,11 @@ int sock_send(int log_file, int client_fd){
         syslog(LOG_DEBUG, "read_count: %d, log_file: %d, client_fd: %d\n",read_count, log_file, client_fd);
         if (read_count == -1){
             perror("read");
+            if (close(log_file) == -1){
+                perror("close");
+                syslog(LOG_ERR, "Could not close log file\n");
+                return -1;
+            }
             return -1;
         } 
         if (read_count == 0) {
@@ -60,9 +103,19 @@ int sock_send(int log_file, int client_fd){
         int sent_bytes = send(client_fd, buf, read_count,0);
         if (sent_bytes == -1){
             perror("send");
+            if (close(log_file) == -1){
+                perror("close");
+                syslog(LOG_ERR, "Could not close log file\n");
+                return -1;
+            }
             return -1;
         }
         syslog(LOG_DEBUG, "Sent %d bytes back.\n", sent_bytes);
+    }
+    if (close(log_file) == -1){
+        perror("close");
+        syslog(LOG_ERR, "Could not close log file\n");
+        return -1;
     }
     return 0;
 }
@@ -71,26 +124,30 @@ void signal_handler(int signal_number){
     if (signal_number == SIGINT) {
         syslog(LOG_DEBUG, "Caught signal, exiting");
         non_interrupted = false;
+        #if !USE_AESD_CHAR_DEVICE
         shutdown(fd, SHUT_RDWR);
-        if (unlink("/var/tmp/aesdsocketdata") == -1){
-            syslog(LOG_ERR, "Could not unlink /var/tmp/aesdsocketdata\n");
+        if (unlink(LOG_FILE) == -1){
+            syslog(LOG_ERR, "Could not unlink log file\n");
         } else {
-            syslog(LOG_DEBUG, "Unlinked /var/tmp/aesdsocketdata\n");
+            syslog(LOG_DEBUG, "Unlinked log file\n");
         }
+        #endif
         if (close(log_file) == -1){
-            syslog(LOG_ERR, "Could not close /var/tmp/aesdsocketdata\n");
+            syslog(LOG_ERR, "Could not close log file\n");
         }
     } else if (signal_number == SIGTERM) {
         syslog(LOG_DEBUG, "Caught signal, exiting");
         non_interrupted = false;
+        #if !USE_AESD_CHAR_DEVICE
         shutdown(fd, SHUT_RDWR);
-        if (unlink("/var/tmp/aesdsocketdata") == -1){
-            syslog(LOG_ERR, "Could not unlink /var/tmp/aesdsocketdata\n");
+        if (unlink(LOG_FILE) == -1){
+            syslog(LOG_ERR, "Could not unlink log file\n");
         } else {
-            syslog(LOG_DEBUG, "Unlinked /var/tmp/aesdsocketdata\n");
+            syslog(LOG_DEBUG, "Unlinked log file\n");
         }
+        #endif
         if (close(log_file) == -1){
-            syslog(LOG_ERR, "Could not close /var/tmp/aesdsocketdata\n");
+            syslog(LOG_ERR, "Could not close log file\n");
         }
     }
 }
@@ -216,6 +273,7 @@ int perform_socket_actions(int log_file, int listen_backlog) {
     struct slisthead head;
     SLIST_INIT(&head);
 
+    #if !USE_AESD_CHAR_DEVICE
     //create timer thread with posix timer + event handler
     timer_t timerid;
     struct sigevent sev;
@@ -241,6 +299,7 @@ int perform_socket_actions(int log_file, int listen_backlog) {
             syslog(LOG_ERR, "Error starting timer %#jx\n", (uint64_t) timerid);
         }
     }
+    #endif
 
     while (non_interrupted == true){
         if (listen(fd,listen_backlog) == -1){
@@ -304,12 +363,13 @@ int perform_socket_actions(int log_file, int listen_backlog) {
             }
         }
     }
-    
+    #if !USE_AESD_CHAR_DEVICE
     if (timer_delete(timerid) != 0) {
         perror("timer delete");
         syslog(LOG_ERR, "Error deleting timer: %d %#jx\n", errno, (uint64_t) timerid);
     }
     free(t_node);
+    #endif
     return 0; 
 }
 
@@ -330,13 +390,6 @@ int main(int argc, char *argv[]){
     if (sigaction(SIGINT, &new_action, NULL) == -1) {
             perror("sigaction");
             return -1;
-    }
-
-    log_file = open("/var/tmp/aesdsocketdata", O_CREAT | O_RDWR | O_NONBLOCK, 0777);
-    if (log_file == -1) {
-        perror("open");
-        syslog(LOG_ERR, "Could not access /var/tmp/aesdsocketdata\n");
-        return -1;
     }
 
     memset(&hints, 0, sizeof(hints));
