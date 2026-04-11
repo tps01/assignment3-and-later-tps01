@@ -61,7 +61,8 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
     size_t new_pos = 0;
     uint8_t offs = buffer->out_offs; 
     //move one entry at a time
-    for (int i=0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; i++){
+    int i;
+    for (i=0; i < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; i++){
         //entry at current offset's size
         new_pos = new_pos + buffer->entry[offs].size; //move the furthest location out to the end of the entry
         
