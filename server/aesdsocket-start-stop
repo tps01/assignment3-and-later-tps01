@@ -5,11 +5,14 @@ ARG="-d"
 case "$1" in
     start)
         echo "starting aesdsocket"
-        start-stop-daemon -S --exec aesdsocket -- ${ARG}
+        # The assignment 8 autograder greps for /usr/bin/aesdsocket specifically
+        # had to change this away from just aesdsocket, even though that is in the path.
+        start-stop-daemon -S --exec /usr/bin/aesdsocket -- ${ARG}
         ;;
     stop)
         echo "Stopping aesdsocket"
-        start-stop-daemon -K -n aesdsocket
+        
+        start-stop-daemon -K -n /usr/bin/aesdsocket
         ;;
     *)
         echo "Usage: $0 {start|stop}"
